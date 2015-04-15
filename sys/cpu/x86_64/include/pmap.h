@@ -85,13 +85,18 @@
 	    PG_M | PG_A | PG_NC_PCD | PG_NC_PWT | PG_U | PG_RW | PG_V)
 */
 /*
- * Page Protection Exception bits
+ * Page Protection Exception bits (section 4.7 in Intel Manual Vol3A)
  */
 
+// 0 = not present
 #define PGEX_P		0x01	/* Protection violation vs. not present */
+// 0 = read fault
 #define PGEX_W		0x02	/* during a Write cycle */
+// 0 = kernel-mode
 #define PGEX_U		0x04	/* access from User mode (UPL) */
+// 1 = reserve bit violation
 #define PGEX_RSV	0x08	/* reserved PTE field is non-zero */
+// 1 = instr fetch
 #define PGEX_I		0x10	/* during an instruction fetch */
 
 /*

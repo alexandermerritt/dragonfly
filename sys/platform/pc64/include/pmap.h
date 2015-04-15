@@ -116,6 +116,7 @@
  */
 #define	PML4PML4I	(NPML4EPG/2)	/* Index of recursive pml4 mapping */
 
+// kernel PML4e index (?)
 #define	KPML4I		(NPML4EPG-1)	/* Top 512GB for KVM */
 #define	DMPML4I		(KPML4I-NDMPML4E) /* Next 512GBxN down for dmap */
 

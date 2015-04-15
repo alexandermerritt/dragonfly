@@ -1123,6 +1123,7 @@ VM_PAGE_DEBUG_EXT(vm_page_lookup_busy_try)(struct vm_object *object,
 	vm_page_t m;
 
 	ASSERT_LWKT_TOKEN_HELD(vm_object_token(object));
+        // m = RB_LOOKUP(vm_page_rb_tree, &object->rb_memq, pindex);
 	m = vm_page_rb_tree_RB_LOOKUP(&object->rb_memq, pindex);
 	*errorp = FALSE;
 	while (m) {
@@ -1290,6 +1291,14 @@ _vm_page_list_find(int basequeue, int index, boolean_t prefer_zero)
 	return(m);
 }
 
+// called when primary queue searched is empty
+// procedure for search:
+// 	d = 256 / 2
+// repeat:
+//	look at queues at index+d, index-1 mod 256
+//	if found, break
+//	d-- goto repeat
+//
 static vm_page_t
 _vm_page_list_find2(int basequeue, int index)
 {
@@ -1525,6 +1534,8 @@ vm_page_pcpu_cache(void)
  * Additional special handling is required when called from an interrupt
  * (VM_ALLOC_INTERRUPT).  We are not allowed to mess with the page cache
  * in this case.
+ *
+ * am: object is NULL if e.g. allocating for kernel areas (they get no objects)
  */
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int page_req)
@@ -1553,6 +1564,25 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int page_req)
 
 	/*
 	 * Cpu twist - cpu localization algorithm
+         *
+         * if 4 CPUs, ncpus_fit=0x4 and ncpus_fit_mask=0x3=11b. using the mask,
+         * we can clear the bits of something associated with the cpuid.
+         *
+         * object->pg_color is initialized to the value of curthread
+         *
+         *   pindex with lower n bits cleared
+         *   objcolor with lower n bits cleared
+         * +___________________________________
+         *   R, some random value with lower n bits cleared
+         *
+         * then we add CPUID to R to get COLOR, effectively partitioning all
+         * colors into groups based on CPUs
+         *
+         * then vm_page_select_free looks into the PQ_FREE lists (256 of them)
+         * which manage a total of vmstats.v_free_count pages
+         *
+         * COLOR then truncated to length of each section (e.g. of PQ_FREE)
+         * and a page from the list at the specified index is chosen
 	 */
 	if (object) {
 		pg_color = gd->gd_cpuid + (pindex & ~ncpus_fit_mask) +

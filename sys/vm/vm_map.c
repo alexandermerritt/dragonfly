@@ -634,6 +634,8 @@ vm_map_entry_shadow(vm_map_entry_t entry, int addref)
  *
  * The vm_map must be exclusively locked.
  * No other requirements.
+ *
+ * am: anon mappings do seem to get a vm_object. happens on page fault
  */
 void 
 vm_map_entry_allocate_object(vm_map_entry_t entry)
@@ -4005,6 +4007,8 @@ RetryLookup:
 		 * Entry was either not a valid hint, or the vaddr was not
 		 * contained in the entry, so do a full lookup.
 		 */
+		// if you fail to find an entry, then it means we faulted on an
+		// address which received no prior authorization
 		if (!vm_map_lookup_entry(map, vaddr, &tmp_entry)) {
 			rv = KERN_INVALID_ADDRESS;
 			goto done;

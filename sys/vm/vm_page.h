@@ -230,6 +230,7 @@ typedef struct vm_page *vm_page_t;
 
 #define PQ_L2_MASK	(PQ_L2_SIZE - 1)
 
+// am: these are starting offsets into vm_page_queues
 #define PQ_NONE		0
 #define PQ_FREE		(1 + 0*PQ_L2_SIZE)
 #define PQ_INACTIVE	(1 + 1*PQ_L2_SIZE)
@@ -261,6 +262,10 @@ struct rb_vm_page_scan_info {
 
 int rb_vm_page_scancmp(struct vm_page *, void *);
 
+// Two counter variables, one global one local
+// cnt	points to a common counter shared among lists belonging to same PQ_
+// 	from the vmstats structure, see vm_page_queue_init
+// lcnt count for the local list
 struct vpgqueues {
 	struct pglist pl;
 	int	*cnt;

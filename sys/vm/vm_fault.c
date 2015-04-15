@@ -342,6 +342,8 @@ RetryFault:
 	 * table entry.
 	 */
 	fs.map = map;
+	// am: find the vm_entry for this vaddr, create a vm_object for it with
+	// color set to curthread, else use the previously created obj.
 	result = vm_map_lookup(&fs.map, vaddr, fault_type,
 			       &fs.entry, &fs.first_object,
 			       &first_pindex, &fs.first_prot, &fs.wired);
@@ -1333,6 +1335,9 @@ vm_fault_object(struct faultstate *fs, vm_pindex_t first_pindex,
 		 * around with a vm_page_t->busy page except, perhaps,
 		 * to pmap it.
 		 */
+                // if page not resident, returns NULL
+                // resident pages for a vm_object are kept in an RB tree
+                // error always false if !m
 		fs->m = vm_page_lookup_busy_try(fs->object, pindex,
 						TRUE, &error);
 		if (error) {
@@ -1405,6 +1410,8 @@ vm_fault_object(struct faultstate *fs, vm_pindex_t first_pindex,
 		 * Page is not resident, If this is the search termination
 		 * or the pager might contain the page, allocate a new page.
 		 */
+                // TRYPAGER is false if OBJT_DEFAULT (true for anon)
+		// it seems fs->obj == fs->first here, too for anon
 		if (TRYPAGER(fs) || fs->object == fs->first_object) {
 			/*
 			 * Allocating, must be exclusive.
