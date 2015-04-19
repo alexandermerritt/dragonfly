@@ -252,6 +252,118 @@ procfs_domap(struct proc *curp, struct lwp *lp, struct pfsnode *pfs,
 	return error;
 }
 
+struct vobj_scan_data
+{
+	int *ncolors;
+	int n;
+};
+
+static int _scan_callback(vm_page_t pg, void *_data)
+{
+	struct vobj_scan_data *data =
+		(struct vobj_scan_data*)_data;
+	if (data && data->ncolors)
+		if (pg->pc < data->n)
+			data->ncolors[pg->pc]++;
+	//lwkt_yield();
+	return 0;
+}
+
+static int _scan_vm_object(struct vm_object *vobj, int *ncolors, int n)
+{
+	struct vobj_scan_data scan_data;
+	if (!vobj || !ncolors || n < 1)
+		return 1;
+	memset(ncolors, 0, sizeof(*ncolors) * n);
+	scan_data.ncolors = ncolors;
+	scan_data.n = n;
+	vm_object_hold(vobj);
+	RB_SCAN(vm_page_rb_tree, &vobj->rb_memq,
+			NULL, _scan_callback, &scan_data);
+	vm_object_drop(vobj);
+	return 0;
+}
+
+/*
+ * Print the page color counts for resident pages of a process'
+ * vm_object set.
+ *
+ * $ cat /proc/pid/pmap
+ * objptr color:pgcount ...
+ */
+int
+procfs_dopmap(struct proc *curp, struct lwp *lp, struct pfsnode *pfs,
+	     struct uio *uio)
+{
+	struct proc *p = lp->lwp_proc;
+	int len, c, pos;
+	int error = 0, *ncolors = NULL;
+	vm_map_t map = &p->p_vmspace->vm_map;
+	vm_map_entry_t entry;
+	struct vm_object *vobj;
+	char mebuffer[MEBUFFERSIZE];
+
+	if (uio->uio_rw != UIO_READ)
+		return (EOPNOTSUPP);
+
+	if (uio->uio_offset != 0)
+		return (0);
+	
+	ncolors = kmalloc(PQ_L2_SIZE * sizeof(*ncolors),
+			M_TEMP, M_WAITOK | M_ZERO);
+	if (!ncolors)
+		return (ENOMEM);
+
+	vm_map_lock_read(map);
+	entry = map->header.next;
+	while ((uio->uio_resid > 0) && (entry != &map->header)) {
+		KKASSERT(entry);
+		pos = len = 0;
+		vobj = entry->object.vm_object;
+		if (!vobj || vobj->type != OBJT_DEFAULT)
+			goto next;
+		error = _scan_vm_object(vobj, ncolors, PQ_L2_SIZE);
+		if (error)
+			break;
+		pos += ksnprintf(mebuffer+pos, sizeof(mebuffer)-pos,
+				"%p ", vobj);
+		for (c = 0; c < PQ_L2_SIZE; c++) {
+			if (ncolors[c] <= 0)
+				continue;
+			pos += ksnprintf(mebuffer+pos,
+					sizeof(mebuffer)-pos,
+					"%d:%d ", c, ncolors[c]);
+			// premature flush
+			if ((MEBUFFERSIZE-pos) < 16) {
+				vm_map_unlock_read(map);
+				mebuffer[pos] = '\0';
+				len = strlen(mebuffer);
+				error = uiomove(mebuffer, len, uio);
+				if (error)
+					goto out;
+				vm_map_lock_read(map);
+				pos = len = 0;
+			}
+		}
+		pos += ksnprintf(mebuffer+pos, sizeof(mebuffer)-pos, "\n");
+		vm_map_unlock_read(map);
+		mebuffer[pos] = '\0';
+		mebuffer[pos-1] = '\n';
+		len = strlen(mebuffer);
+		error = uiomove(mebuffer, len, uio);
+		vm_map_lock_read(map);
+		if (error)
+			break;
+next:;
+		entry = entry->next;
+	}
+	vm_map_unlock_read(map);
+out:;
+	if (ncolors)
+		kfree(ncolors, M_TEMP);
+	return error;
+}
+
 int
 procfs_validmap(struct lwp *lp)
 {

@@ -209,6 +209,7 @@ loop:
 
 	case Ptype:
 	case Pmap:
+	case Ppmap:
 	case Pstatus:
 	case Pcmdline:
 	case Prlimit:
@@ -390,6 +391,10 @@ procfs_rw(struct vop_read_args *ap)
 
 	case Pmap:
 		rtval = procfs_domap(curp, lp, pfs, uio);
+		break;
+
+	case Ppmap:
+		rtval = procfs_dopmap(curp, lp, pfs, uio);
 		break;
 
 	case Pmem:

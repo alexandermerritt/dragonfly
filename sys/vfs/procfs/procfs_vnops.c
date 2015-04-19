@@ -139,6 +139,7 @@ static struct proc_target {
 	{ DT_REG, N("note"),	Pnote,		NULL },
 	{ DT_REG, N("notepg"),	Pnotepg,	NULL },
 	{ DT_REG, N("map"), 	Pmap,		procfs_validmap },
+	{ DT_REG, N("pmap"), 	Ppmap,		procfs_validmap },
 	{ DT_REG, N("etype"),	Ptype,		procfs_validtype },
 	{ DT_REG, N("cmdline"),	Pcmdline,	NULL },
 	{ DT_REG, N("rlimit"),	Prlimit,	NULL },
@@ -686,6 +687,7 @@ procfs_getattr(struct vop_getattr_args *ap)
 
 	case Ptype:
 	case Pmap:
+	case Ppmap:
 	case Pctl:
 	case Pstatus:
 	case Pnote:

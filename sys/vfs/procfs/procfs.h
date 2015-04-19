@@ -58,6 +58,7 @@ typedef enum {
 	Pnote,		/* process notifier */
 	Pnotepg,	/* process group notifier */
 	Pmap,		/* memory map */
+	Ppmap,		/* physical map */
 	Ptype,		/* executable type */
 	Pcmdline,	/* command line */
 	Prlimit		/* resource limits */
@@ -141,6 +142,7 @@ int procfs_domem (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio 
 int procfs_doctl (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
 int procfs_dostatus (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
 int procfs_domap (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
+int procfs_dopmap (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
 int procfs_dotype (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
 int procfs_docmdline (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
 int procfs_dorlimit (struct proc *, struct lwp *, struct pfsnode *pfsp, struct uio *uio);
