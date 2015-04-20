@@ -2000,12 +2000,8 @@ vm_pick_colors(struct vm_color *color, off_t many)
 	memset(color->bitset, 0, sizeof(color->bitset));
 	sort_pq(pqids, PQ_FREE);
 	i = PQ_L2_SIZE-1;
-	kprintf("%s colors:", __func__);
-	while (many-- > 0) {
+	while (many-- > 0)
 		set_bit(color->bitset, VM_COLOR_BITSET_SZ, pqids[i--]);
-		kprintf(" %d", pqids[i+1]);
-	}
-	kprintf("\n");
 
 	kfree(pqids, M_TEMP);
 	return 0;
