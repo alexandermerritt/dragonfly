@@ -1957,13 +1957,14 @@ typedef uint16_t q_idx_t;
  * sorted info as an array of index values into vm_page_queues, at
  * given page queue index.
  */
-static void
+static __noinline void
 sort_pq(q_idx_t *idx, const int pq)
 {
-	struct vpgqueues *qs = vm_page_queues;
-	q_idx_t key, j, i;
+	struct vpgqueues *qs = &vm_page_queues[pq];
+	q_idx_t key;
+	long j, i; /* these must be larger than q_idx_t and signed */
 	for (j = 0; j < PQ_L2_SIZE; j++)
-		idx[j] = pq+j;
+		idx[j] = j;
 	/* insertion sort, ok if PQ_L2_SIZE is small */
 	for (j = 1; j < PQ_L2_SIZE; j++) {
 		key = idx[j];
@@ -1977,28 +1978,34 @@ sort_pq(q_idx_t *idx, const int pq)
 }
 
 /* choose colors with the most free pages available */
-static int
+static __noinline int
 vm_pick_colors(struct vm_color *color, off_t many)
 {
 	q_idx_t *pqids = NULL;
 	int i;
 
-	if (!color || many < 0 || many > VM_COLOR_MAX)
+	KKASSERT(color != NULL);
+	if (many < 0 || many > VM_COLOR_MAX)
 		return (EINVAL);
 	if (many == 0)
 		return 0;
 	color->n = many;
+	color->next = 1;
 
 	pqids = kmalloc(PQ_L2_SIZE * sizeof(*pqids),
 			M_TEMP, M_WAITOK);
-	if (!pqids)
+	if (pqids == NULL)
 		return (ENOMEM);
 
 	memset(color->bitset, 0, sizeof(color->bitset));
 	sort_pq(pqids, PQ_FREE);
 	i = PQ_L2_SIZE-1;
-	while (many-- > 0)
+	kprintf("%s colors:", __func__);
+	while (many-- > 0) {
 		set_bit(color->bitset, VM_COLOR_BITSET_SZ, pqids[i--]);
+		kprintf(" %d", pqids[i+1]);
+	}
+	kprintf("\n");
 
 	kfree(pqids, M_TEMP);
 	return 0;
