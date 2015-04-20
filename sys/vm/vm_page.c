@@ -1751,10 +1751,11 @@ vm_page_t
 vm_page_alloc2(vm_object_t object, vm_pindex_t pindex, int page_req,
 		struct vm_map_entry *entry)
 {
-	struct vm_color *col;
+	struct vm_color *color;
 	vm_object_t obj;
 	vm_page_t m = NULL;
 	u_short pg_color;
+	int bit;
 
 	// UK and !NORMAL pages may not have objects
 	KKASSERT(object);
@@ -1762,11 +1763,14 @@ vm_page_alloc2(vm_object_t object, vm_pindex_t pindex, int page_req,
 		(VM_ALLOC_NORMAL|VM_ALLOC_QUICK|
 		 VM_ALLOC_INTERRUPT|VM_ALLOC_SYSTEM));
 
-	col = &entry->vm_color;
-	pg_color = ~ncpus_fit_mask &
-		nth_bitset(col->bitset, VM_COLOR_BITSET_SZ, col->next);
-	// XXX race condition?
-	col->next = (col->next + 1) % (col->n + 1);
+	color    = &entry->vm_color;
+	bit      = nth_bitset(color->bitset, VM_COLOR_BITSET_SZ, color->next);
+	pg_color = PQ_L2_MASK & bit;
+	KASSERT(pg_color == bit, ("nth_bitset returning overflow index: %d", bit));
+
+	// XXX race condition? if so, (hack) can avoid this by having
+	// a single thread fault in all pages first
+	color->next = (color->next % color->n) + 1;
 
 	if (curthread->td_flags & TDF_SYSTHREAD)
 		page_req |= VM_ALLOC_SYSTEM;
@@ -1781,9 +1785,6 @@ loop:;
 	if (use_free) {
 		int zero = !!(page_req & (VM_ALLOC_ZERO | VM_ALLOC_FORCE_ZERO));
 		m = vm_page_select_free(pg_color, zero);
-		if (m->pc != pg_color) {
-			kprintf("%s: didn't get expected color\n", __func__);
-		}
 	} else if (page_req & VM_ALLOC_NORMAL) {
 		m = vm_page_select_cache(pg_color);
 		if (m != NULL) {
@@ -1817,6 +1818,14 @@ loop:;
 	if (m == NULL)
 		goto loop;
 
+	if (m->pc != pg_color) {
+		kprintf("%s: whoops, wanted color %d but got %d\n",
+				__func__, pg_color, m->pc);
+		kprintf("    could be because we ran out of pages of this color?\n");
+		kprintf("        let's see.. PQ_FREE[%d].lcnt = %d\n", pg_color,
+				vm_page_queues[PQ_FREE+pg_color].lcnt);
+	}
+
 	KASSERT(m->dirty == 0,
 		("vm_page_alloc: free/cache page %p was dirty", m));
 	KKASSERT(m->queue == PQ_NONE);
@@ -1826,8 +1835,6 @@ loop:;
 	KKASSERT(m->busy == 0);
 	m->act_count = 0;
 	m->valid = 0;
-
-	//kprintf("got page color %d\n", m->pc);
 
 #if 0
 	if (object) {
