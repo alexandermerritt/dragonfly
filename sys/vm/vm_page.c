@@ -88,6 +88,7 @@
 #include <vm/vm_pager.h>
 #include <vm/vm_extern.h>
 #include <vm/swap_pager.h>
+#include <vm/bitops.h>
 
 #include <machine/inttypes.h>
 #include <machine/md_var.h>
@@ -1536,6 +1537,8 @@ vm_page_pcpu_cache(void)
  * in this case.
  *
  * am: object is NULL if e.g. allocating for kernel areas (they get no objects)
+ * but anon regions DO get vm_objects, and at this point, it will not
+ * be null
  */
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int page_req)
@@ -1737,6 +1740,111 @@ done:
 	/*
 	 * A PG_BUSY page is returned.
 	 */
+	return (m);
+}
+
+
+// XXX passing ptr to vm_map_entry may be unsafe, e.g., multiple PF to
+// same entry modifying it, or some other path which causes it to be
+// deallocated
+vm_page_t
+vm_page_alloc2(vm_object_t object, vm_pindex_t pindex, int page_req,
+		struct vm_map_entry *entry)
+{
+	struct vm_color *col;
+	vm_object_t obj;
+	vm_page_t m = NULL;
+	u_short pg_color;
+
+	// UK and !NORMAL pages may not have objects
+	KKASSERT(object);
+	KKASSERT(page_req & 
+		(VM_ALLOC_NORMAL|VM_ALLOC_QUICK|
+		 VM_ALLOC_INTERRUPT|VM_ALLOC_SYSTEM));
+
+	col = &entry->vm_color;
+	pg_color = ~ncpus_fit_mask &
+		nth_bitset(col->bitset, VM_COLOR_BITSET_SZ, col->next);
+	// XXX race condition?
+	col->next = (col->next + 1) % (col->n + 1);
+
+	if (curthread->td_flags & TDF_SYSTHREAD)
+		page_req |= VM_ALLOC_SYSTEM;
+
+loop:;
+	int use_free = 
+		(vmstats.v_free_count > vmstats.v_free_reserved ||
+		 ((page_req & VM_ALLOC_INTERRUPT) && vmstats.v_free_count > 0) ||
+		 ((page_req & VM_ALLOC_SYSTEM) && vmstats.v_cache_count == 0 &&
+		  vmstats.v_free_count > vmstats.v_interrupt_free_min));
+
+	if (use_free) {
+		int zero = !!(page_req & (VM_ALLOC_ZERO | VM_ALLOC_FORCE_ZERO));
+		m = vm_page_select_free(pg_color, zero);
+		if (m->pc != pg_color) {
+			kprintf("%s: didn't get expected color\n", __func__);
+		}
+	} else if (page_req & VM_ALLOC_NORMAL) {
+		m = vm_page_select_cache(pg_color);
+		if (m != NULL) {
+			KASSERT(m->dirty == 0,
+				("Found dirty cache page %p", m));
+			if ((obj = m->object) != NULL) {
+				if (vm_object_hold_try(obj)) {
+					vm_page_protect(m, VM_PROT_NONE);
+					vm_page_free(m);
+					/* m->object NULL here */
+					vm_object_drop(obj);
+				} else {
+					vm_page_deactivate(m);
+					vm_page_wakeup(m);
+				}
+			} else {
+				vm_page_protect(m, VM_PROT_NONE);
+				vm_page_free(m);
+			}
+			goto loop;
+		}
+		vm_pageout_deficit++;
+		pagedaemon_wakeup();
+		return (NULL);
+	} else {
+		vm_pageout_deficit++;
+		pagedaemon_wakeup();
+		return (NULL);
+	}
+
+	if (m == NULL)
+		goto loop;
+
+	KASSERT(m->dirty == 0,
+		("vm_page_alloc: free/cache page %p was dirty", m));
+	KKASSERT(m->queue == PQ_NONE);
+
+	vm_page_flag_clear(m, ~(PG_ZERO | PG_BUSY | PG_SBUSY));
+	KKASSERT(m->wire_count == 0);
+	KKASSERT(m->busy == 0);
+	m->act_count = 0;
+	m->valid = 0;
+
+	//kprintf("got page color %d\n", m->pc);
+
+#if 0
+	if (object) {
+#endif
+		if (vm_page_insert(m, object, pindex) == FALSE) {
+			vm_page_free(m);
+			if ((page_req & VM_ALLOC_NULL_OK) == 0)
+				panic("PAGE RACE %p[%ld]/%p",
+				      object, (long)pindex, m);
+			m = NULL;
+		}
+#if 0
+	} else {
+		m->pindex = pindex;
+	}
+#endif
+	pagedaemon_wakeup();
 	return (m);
 }
 

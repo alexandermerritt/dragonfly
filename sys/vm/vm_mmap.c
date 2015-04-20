@@ -732,6 +732,7 @@ sys_mcontrol(struct mcontrol_args *uap)
 	 */
 	if (uap->behav < 0 || uap->behav > MADV_CONTROL_END)
 		return (EINVAL);
+
 	/*
 	 * Check for illegal addresses.  Watch out for address wrap... Note
 	 * that VM_*_ADDRESS are not constants due to casts (argh).
@@ -1286,7 +1287,7 @@ vm_mmap(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 		/*
 		 * Unnamed anonymous regions always start at 0.
 		 */
-		if (handle) {
+		if (handle) { // am: null ..
 			/*
 			 * Default memory object
 			 */
@@ -1414,7 +1415,7 @@ vm_mmap(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 	 *
 	 * (object can be NULL)
 	 */
-	if (fitit) {
+	if (fitit) { // am: does nothing for anon
 		*addr = pmap_addr_hint(object, *addr, size);
 	}
 
@@ -1440,6 +1441,7 @@ vm_mmap(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 				 fitit, VM_MAPTYPE_VPAGETABLE,
 				 prot, maxprot, docow);
 	} else {
+		// am: anon regions. find an address to map to.
 		rv = vm_map_find(map, object, NULL,
 				 foff, addr, size,
 				 align,

@@ -344,6 +344,7 @@ RetryFault:
 	fs.map = map;
 	// am: find the vm_entry for this vaddr, create a vm_object for it with
 	// color set to curthread, else use the previously created obj.
+	// HERE XXX
 	result = vm_map_lookup(&fs.map, vaddr, fault_type,
 			       &fs.entry, &fs.first_object,
 			       &first_pindex, &fs.first_prot, &fs.wired);
@@ -554,6 +555,8 @@ RetryFault:
 	 *
 	 * If the fault code uses the shared object lock shortcut
 	 * we must not try to burst (we can't allocate VM pages).
+	 *
+	 * am: HERE XXX
 	 */
 	result = vm_fault_object(&fs, first_pindex, fault_type, 1);
 
@@ -581,6 +584,7 @@ RetryFault:
 	 */
 	KKASSERT(fs.lookup_still_valid == TRUE);
 	vm_page_flag_set(fs.m, PG_REFERENCED);
+	// am: HERE XXX
 	pmap_enter(fs.map->pmap, vaddr, fs.m, fs.prot | inherit_prot,
 		   fs.wired, fs.entry);
 
@@ -1461,11 +1465,19 @@ vm_fault_object(struct faultstate *fs, vm_pindex_t first_pindex,
 			 */
 			fs->m = NULL;
 			if (!vm_page_count_severe()) {
-				fs->m = vm_page_alloc(fs->object, pindex,
-				    ((fs->vp || fs->object->backing_object) ?
-					VM_ALLOC_NULL_OK | VM_ALLOC_NORMAL :
-					VM_ALLOC_NULL_OK | VM_ALLOC_NORMAL |
-					VM_ALLOC_USE_GD | VM_ALLOC_ZERO));
+				// am: HERE XXX
+				const int page_req = 
+					((fs->vp || fs->object->backing_object) ?
+					 VM_ALLOC_NULL_OK | VM_ALLOC_NORMAL :
+					 VM_ALLOC_NULL_OK | VM_ALLOC_NORMAL |
+					 VM_ALLOC_USE_GD | VM_ALLOC_ZERO);
+				if ((fs->entry->eflags & MAP_ENTRY_PGCOLOR) == 0) {
+					fs->m = vm_page_alloc(fs->object, pindex,
+							page_req);
+				} else {
+					fs->m = vm_page_alloc2(fs->object, pindex,
+							page_req, fs->entry);
+				}
 			}
 			if (fs->m == NULL) {
 				vm_object_pip_wakeup(fs->first_object);

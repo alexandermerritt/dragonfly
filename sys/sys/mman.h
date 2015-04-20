@@ -133,6 +133,7 @@
 #define	MADV_CORE	9	/* revert to including pages in a core file */
 #define MADV_INVAL	10	/* virt page tables have changed, inval pmap */
 #define MADV_SETMAP	11	/* set page table directory page for map */
+#define MADV_PGCOLOR	12	/* configure cache coloring */
 
 /*
  * Advice to posix_madvise()
@@ -149,7 +150,7 @@
  * mcontrol() must be used for these functions instead of madvise()
  */
 #define MADV_CONTROL_START	MADV_INVAL
-#define MADV_CONTROL_END	MADV_SETMAP
+#define MADV_CONTROL_END	MADV_PGCOLOR
 
 /*
  * Return bits from mincore

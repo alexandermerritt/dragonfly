@@ -92,6 +92,7 @@
 #include <vm/vm_extern.h>
 #include <vm/swap_pager.h>
 #include <vm/vm_zone.h>
+#include <vm/bitops.h>
 
 #include <sys/thread2.h>
 #include <sys/random.h>
@@ -1056,6 +1057,7 @@ vm_map_insert(vm_map_t map, int *countp, void *map_object, void *map_aux,
 		 prev_entry->maptype == maptype &&
 		 maptype == VM_MAPTYPE_NORMAL &&
 		 ((prev_entry->object.vm_object == NULL) ||
+		  // am: i) expand vm_object HERE XXX
 		  vm_object_coalesce(prev_entry->object.vm_object,
 				     OFF_TO_IDX(prev_entry->offset),
 				     (vm_size_t)(prev_entry->end - prev_entry->start),
@@ -1064,10 +1066,22 @@ vm_map_insert(vm_map_t map, int *countp, void *map_object, void *map_aux,
 		 * We were able to extend the object.  Determine if we
 		 * can extend the previous map entry to include the 
 		 * new range as well.
+		 *
+		 * am: the elseif above checks if we can widen the
+		 * mmap instead of make a new one.
 		 */
 		if ((prev_entry->inheritance == VM_INHERIT_DEFAULT) &&
 		    (prev_entry->protection == prot) &&
 		    (prev_entry->max_protection == max)) {
+			// am: print anon
+			if (offset == 0 && map != &kernel_map) {
+#if 0
+				kprintf("%s: updating vm_entry from 0x%lx-0x%lx"
+						" to -0x%lx\n", __func__,
+						prev_entry->start, prev_entry->end,
+						end);
+#endif
+			}
 			map->size += (end - prev_entry->end);
 			prev_entry->end = end;
 			vm_map_simplify_entry(map, prev_entry, countp);
@@ -1104,6 +1118,14 @@ vm_map_insert(vm_map_t map, int *countp, void *map_object, void *map_aux,
 	/*
 	 * Create a new entry
 	 */
+
+	// am: print anon
+#if 0
+	if (offset == 0 && map != &kernel_map) {
+		kprintf("%s: new vm_entry %lu-%lu\n", __func__,
+				start, end);
+	}
+#endif
 
 	new_entry = vm_map_entry_create(map, countp);
 	new_entry->start = start;
@@ -1202,6 +1224,7 @@ vm_map_findspace(vm_map_t map, vm_offset_t start, vm_size_t length,
 	vm_offset_t end;
 	vm_offset_t align_mask;
 
+	// am: NULL as addr, results in start = min_offset
 	if (start < map->min_offset)
 		start = map->min_offset;
 	if (start > map->max_offset)
@@ -1477,8 +1500,14 @@ _vm_map_clip_start(vm_map_t map, vm_map_entry_t entry, vm_offset_t start,
 	 * is clipped, and individual objects will be created for the split-up
 	 * map.  This is a bit of a hack, but is also about the best place to
 	 * put this improvement.
+	 *
+	 * am: anon regions get objects this way??
 	 */
 	if (entry->object.vm_object == NULL && !map->system_map) {
+#if 0
+		kprintf("%s: allocating vmobj for 0x%016lx\n",
+				__func__, start);
+#endif
 		vm_map_entry_allocate_object(entry);
 	}
 
@@ -1916,6 +1945,65 @@ vm_map_protect(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	return (KERN_SUCCESS);
 }
 
+typedef uint16_t q_idx_t;
+#define QIDX_BITS	16
+#define QIDX_CNT	(1<<QIDX_BITS)
+#if PQ_L2_SIZE > QIDX_CNT
+#error Update q_idx_t to accept greater index quantities.
+#endif
+
+/*
+ * Sorts given page color queue by ascending lcnt size, returning the
+ * sorted info as an array of index values into vm_page_queues, at
+ * given page queue index.
+ */
+static void
+sort_pq(q_idx_t *idx, const int pq)
+{
+	struct vpgqueues *qs = vm_page_queues;
+	q_idx_t key, j, i;
+	for (j = 0; j < PQ_L2_SIZE; j++)
+		idx[j] = pq+j;
+	/* insertion sort, ok if PQ_L2_SIZE is small */
+	for (j = 1; j < PQ_L2_SIZE; j++) {
+		key = idx[j];
+		i   = j-1;
+		while (i >= 0 && qs[idx[i]].lcnt > qs[key].lcnt) {
+			idx[i+1] = idx[i];
+			i--;
+		}
+		idx[i+1] = key;
+	}
+}
+
+/* choose colors with the most free pages available */
+static int
+vm_pick_colors(struct vm_color *color, off_t many)
+{
+	q_idx_t *pqids = NULL;
+	int i;
+
+	if (!color || many < 0 || many > VM_COLOR_MAX)
+		return (EINVAL);
+	if (many == 0)
+		return 0;
+	color->n = many;
+
+	pqids = kmalloc(PQ_L2_SIZE * sizeof(*pqids),
+			M_TEMP, M_WAITOK);
+	if (!pqids)
+		return (ENOMEM);
+
+	memset(color->bitset, 0, sizeof(color->bitset));
+	sort_pq(pqids, PQ_FREE);
+	i = PQ_L2_SIZE-1;
+	while (many-- > 0)
+		set_bit(color->bitset, VM_COLOR_BITSET_SZ, pqids[i--]);
+
+	kfree(pqids, M_TEMP);
+	return 0;
+}
+
 /*
  * This routine traverses a processes map handling the madvise
  * system call.  Advisories are classified as either those effecting
@@ -1931,9 +2019,15 @@ vm_map_madvise(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	       int behav, off_t value)
 {
 	vm_map_entry_t current, entry;
+	struct vm_color color;
 	int modify_map = 0;
 	int error = 0;
 	int count;
+
+	/* do this outside of locks */
+	if (behav == MADV_PGCOLOR)
+		if ((error = vm_pick_colors(&color, value)))
+			return error;
 
 	/*
 	 * Some madvise calls directly modify the vm_map_entry, in which case
@@ -1954,6 +2048,7 @@ vm_map_madvise(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	case MADV_CORE:
 	case MADV_SETMAP:
 	case MADV_INVAL:
+	case MADV_PGCOLOR:
 		modify_map = 1;
 		vm_map_lock(map);
 		break;
@@ -1986,6 +2081,22 @@ vm_map_madvise(vm_map_t map, vm_offset_t start, vm_offset_t end,
 		 *
 		 * We clip the vm_map_entry so that behavioral changes are
 		 * limited to the specified address range.
+		 *
+		 * Loop over all entries which this madvise governs.
+		 *
+		 * +---+---+---+    +---+---+   +---+---+---+
+		 * |   entry   |    | entry |   |   entry   |
+		 * +---+---+---+    +---+---+   +---+---+---+
+		 *     ^start  (3 entries affected)  end^
+		 *   clip here                    clip here
+		 *
+		 * +---+ +---+---+    +---+---+   +---+---+ +---+
+		 * | e | | entry |    | entry |   | entry | | e |
+		 * +---+ +---+---+    +---+---+   +---+---+ +---+
+		 *       ^start                        end^
+		 *
+		 * Apply madvise to the three middle entries,
+		 * excluding outer entries.
 		 */
 		for (current = entry;
 		     (current != &map->header) && (current->start < end);
@@ -2017,6 +2128,13 @@ vm_map_madvise(vm_map_t map, vm_offset_t start, vm_offset_t end,
 				break;
 			case MADV_CORE:
 				current->eflags &= ~MAP_ENTRY_NOCOREDUMP;
+				break;
+			case MADV_PGCOLOR:
+				current->vm_color = color;
+				if (value > 0)
+					current->eflags |= MAP_ENTRY_PGCOLOR;
+				else
+					current->eflags &= ~MAP_ENTRY_PGCOLOR;
 				break;
 			case MADV_INVAL:
 				/*
@@ -3999,6 +4117,7 @@ RetryLookup:
 	*out_entry = entry;
 	*object = NULL;
 
+	// am: hint is initialized to &header
 	if ((entry == &map->header) ||
 	    (vaddr < entry->start) || (vaddr >= entry->end)) {
 		vm_map_entry_t tmp_entry;
@@ -4086,6 +4205,8 @@ RetryLookup:
 
 	/*
 	 * Only NORMAL and VPAGETABLE maps are object-based.  UKSMAPs are not.
+	 *
+	 * am: anon regions are NORMAL
 	 */
 	if (entry->maptype != VM_MAPTYPE_NORMAL &&
 	    entry->maptype != VM_MAPTYPE_VPAGETABLE) {
@@ -4141,6 +4262,7 @@ RetryLookup:
 			goto RetryLookup;
 		}
 		use_read_lock = 0;
+		// am: HERE XXX
 		vm_map_entry_allocate_object(entry);
 	}
 

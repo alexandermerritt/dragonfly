@@ -1704,6 +1704,7 @@ shadowlookup:
 			vm_page_sleep_busy(m, TRUE, "madvpo");
 			goto relookup;
 		}
+		// am: page not resident
 		if (m == NULL) {
 			/*
 			 * There may be swap even if there is no backing page

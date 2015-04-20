@@ -135,6 +135,25 @@ union vm_map_aux {
 	void	*map_aux;
 };
 
+#define VM_COLOR_MAX		PQ_L2_SIZE	/* assume power of two */
+#define VM_COLOR_MASK		(VM_COLOR_MAX-1)
+#define VM_COLOR_BITSET_SZ	(VM_COLOR_MAX>>3)
+/*
+ * Specific cache colors usable by a memory region. Enable with:
+ *
+ *     mcontrol(addr, len, MADV_PGCOLOR, n_colors > 0);
+ *
+ * n       number of colors specified (0=disabled)
+ * next    rotation of colors within set, used on pagefault
+ * bitset  one bit per color in system; 1 = use this color
+ *
+ * You may find useful the API in sys/vm/bitops.h
+ */
+struct vm_color {
+	int n, next;
+	u_char bitset[VM_COLOR_BITSET_SZ];
+};
+
 /*
  *	Address map entries consist of start and end addresses,
  *	a VM object (or sharing map) and offset into that object,
@@ -157,12 +176,15 @@ struct vm_map_entry {
 	union vm_map_object object;	/* object I point to */
 	vm_ooffset_t offset;		/* offset into object */
 	vm_eflags_t eflags;		/* map entry flags */
+	struct vm_color vm_color;	/* advanced use of colors */
 	vm_maptype_t maptype;		/* type of VM mapping */
 	vm_prot_t protection;		/* protection code */
 	vm_prot_t max_protection;	/* maximum protection */
 	vm_inherit_t inheritance;	/* inheritance */
 	int wired_count;		/* can be paged if = 0 */
 };
+
+// eflags fields
 
 #define MAP_ENTRY_NOSYNC		0x0001
 #define MAP_ENTRY_STACK			0x0002
@@ -182,6 +204,8 @@ struct vm_map_entry {
 #define MAP_ENTRY_NEEDS_WAKEUP		0x0200	/* waiter's in transition */
 #define MAP_ENTRY_NOCOREDUMP		0x0400	/* don't include in a core */
 #define MAP_ENTRY_KSTACK		0x0800	/* guarded kernel stack */
+
+#define MAP_ENTRY_PGCOLOR		0x1000	/* ncolors specified for entry */
 
 /*
  * flags for vm_map_[un]clip_range()
@@ -232,6 +256,7 @@ struct vm_map {
 	u_char system_map;		/* Am I a system map? */
 	vm_map_entry_t hint;		/* hint for quick lookups */
 	unsigned int timestamp;		/* Version number */
+	// am: first_free and hint are initialized to header
 	vm_map_entry_t first_free;	/* First free space hint */
 	vm_flags_t flags;		/* flags for this vm_map */
 	struct pmap *pmap;		/* Physical map */
