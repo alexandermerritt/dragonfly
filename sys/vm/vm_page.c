@@ -1818,6 +1818,7 @@ loop:;
 	if (m == NULL)
 		goto loop;
 
+#if 0
 	if (m->pc != pg_color) {
 		kprintf("%s: whoops, wanted color %d but got %d\n",
 				__func__, pg_color, m->pc);
@@ -1825,6 +1826,7 @@ loop:;
 		kprintf("        let's see.. PQ_FREE[%d].lcnt = %d\n", pg_color,
 				vm_page_queues[PQ_FREE+pg_color].lcnt);
 	}
+#endif
 
 	KASSERT(m->dirty == 0,
 		("vm_page_alloc: free/cache page %p was dirty", m));
